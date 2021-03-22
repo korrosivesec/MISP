@@ -35,7 +35,8 @@
                     ),
                     array(
                         'text' => __('REST client'),
-                        'url' => $baseurl . '/servers/rest'
+                        'url' => $baseurl . '/servers/rest',
+                        'requirement' => $canAccess('servers', 'rest'),
                     ),
                     array(
                         'type' => 'separator'
@@ -50,7 +51,8 @@
                     ),
                     array(
                         'url' => $baseurl . '/event_delegations/index/context:pending',
-                        'text' => __('View delegation requests')
+                        'text' => __('View delegation requests'),
+                        'requirement' => $canAccess('event_delegations', 'index'),
                     ),
                     array(
                         'type' => 'separator'
@@ -118,6 +120,11 @@
             ),
             array(
                 'type' => 'root',
+                'text' => __('Dashboard'),
+                'url' => $baseurl . '/dashboards'
+            ),
+            array(
+                'type' => 'root',
                 'text' => __('Galaxies'),
                 'url' => $baseurl . '/galaxies/index',
                 'children' => array(
@@ -162,13 +169,17 @@
                     array(
                         'text' => __('List Noticelists'),
                         'url' => $baseurl . '/noticelists/index'
+                    ),
+                    array(
+                        'text' => __('List Correlation Exclusions'),
+			'url' => $baseurl . '/correlation_exclusions/index',
+			'requirement' => $canAccess('correlation_exclusions', 'index'),
                     )
                 )
             ),
             array(
                 'type' => 'root',
                 'text' => __('Global Actions'),
-                'url' => $baseurl . '/dashboards',
                 'children' => array(
                     array(
                         'text' => __('News'),
@@ -185,10 +196,6 @@
                     array(
                         'text' => __('Set Setting'),
                         'url' => $baseurl . '/user_settings/setSetting'
-                    ),
-                    array(
-                        'text' => __('Dashboard'),
-                        'url' => $baseurl . '/dashboards'
                     ),
                     array(
                         'text' => __('Organisations'),
@@ -308,6 +315,11 @@
                         'requirement' => $canAccess('communities', 'index'),
                     ),
                     array(
+                        'text' => __('Cerebrates'),
+                        'url' => $baseurl . '/cerebrates/index',
+                        'requirement' => $canAccess('cerebrates', 'index'),
+                    ),
+                    array(
                         'text' => __('Event ID translator'),
                         'url' => '/servers/idTranslator',
                         'requirement' => $canAccess('servers', 'idTranslator')
@@ -323,6 +335,10 @@
                     array(
                         'text' => __('List Users'),
                         'url' => $baseurl . '/admin/users/index'
+                    ),
+                    array(
+                        'text' => __('List Auth Keys'),
+                        'url' => $baseurl . '/auth_keys/index'
                     ),
                     array(
                         'text' => __('List User Settings'),
@@ -363,7 +379,7 @@
                     ),
                     array(
                         'text' => __('List Roles'),
-                        'url' => $baseurl . '/admin/roles/index'
+                        'url' => $baseurl . '/roles/index'
                     ),
                     array(
                         'text' => __('Add Roles'),
@@ -456,8 +472,8 @@
                     '<span class="fas fa-star %s" id="setHomePage" title="%s" role="img" aria-label="%s" data-current-page="%s"></span>',
                     (!empty($homepage['path']) && $homepage['path'] === $this->here) ? 'orange' : '',
 		    __('Set the current page as your home page in MISP'),
-		    __('Set the current page as your home page in MISP'),		    
-                    $this->here
+		    __('Set the current page as your home page in MISP'),
+                    h($this->here)
                 )
             ),
             array(
@@ -511,4 +527,3 @@
   </div>
 </div>
 <input type="hidden" class="keyboardShortcutsConfig" value="/shortcuts/global_menu.json" />
-

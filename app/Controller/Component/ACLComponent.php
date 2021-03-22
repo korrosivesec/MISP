@@ -15,13 +15,11 @@ class ACLComponent extends Component
     private $__aclList = array(
             '*' => array(
                     'blackhole' => array(),
-                    'checkAction' => array(),
                     'checkAuthUser' => array(),
                     'checkExternalAuthUser' => array(),
                     'cleanModelCaches' => array(),
                     'debugACL' => array(),
                     'generateCount' => array(),
-                    'getActions' => array(),
                     'pruneDuplicateUUIDs' => array(),
                     'queryACL' => array(),
                     'removeDuplicateEvents' => array(),
@@ -78,6 +76,23 @@ class ACLComponent extends Component
                 'edit' => ['perm_auth'],
                 'index' => ['perm_auth'],
                 'view' => ['perm_auth']
+            ],
+            'cerebrates' => [
+                'add' => [],
+                'delete' => [],
+                'download_org' => [],
+                'edit' => [],
+                'index' => [],
+                'preview_orgs' => [],
+                'pull_orgs' => [],
+                'view' => []
+            ],
+            'correlationExclusions' => [
+                'add' => [],
+                'clean' => [],
+                'delete' => [],
+                'index' => [],
+                'view' => []
             ],
             'dashboards' => array(
                 'getForm' => array('*'),
@@ -151,11 +166,11 @@ class ACLComponent extends Component
                     ]
             ),
             'eventDelegations' => array(
-                    'acceptDelegation' => array('perm_add'),
-                    'delegateEvent' => array('perm_delegate'),
-                    'deleteDelegation' => array('perm_add'),
-                    'index' => array('*'),
-                    'view' => array('*'),
+                'acceptDelegation' => array('AND' => ['delegation_enabled', 'perm_add']),
+                'delegateEvent' => array('AND' => ['delegation_enabled', 'perm_delegate']),
+                'deleteDelegation' => array('AND' => ['delegation_enabled', 'perm_add']),
+                'index' => array('delegation_enabled'),
+                'view' => array('delegation_enabled'),
             ),
             'eventReports' => array(
                 'add' => array('perm_add'),
@@ -247,7 +262,9 @@ class ACLComponent extends Component
                     'viewEventAttributes' => array('*'),
                     'viewGraph' => array('*'),
                     'viewGalaxyMatrix' => array('*'),
-                    'xml' => array('*')
+                    'xml' => array('*'),
+                'addEventLock' => ['perm_auth'],
+                'removeEventLock' => ['perm_auth'],
             ),
             'favouriteTags' => array(
                 'toggle' => array('*'),
@@ -331,7 +348,9 @@ class ACLComponent extends Component
                 'view' => array('*'),
             ),
             'galaxyElements' => array(
-                    'index' => array('*')
+                'delete' => array('perm_galaxy_editor'),
+                'flattenJson' => array('perm_galaxy_editor'),
+                'index' => array('*'),
             ),
             'jobs' => array(
                     'cache' => array('*'),
@@ -397,6 +416,7 @@ class ACLComponent extends Component
                 'edit' => array('perm_object_template'),
                 'delete' => array('perm_object_template'),
                 'getToggleField' => array(),
+                'getRaw' => array('perm_object_template'),
                 'objectChoice' => array('*'),
                 'objectMetaChoice' => array('perm_add'),
                 'view' => array('*'),
@@ -451,7 +471,6 @@ class ACLComponent extends Component
                     'admin_add' => array(),
                     'admin_delete' => array(),
                     'admin_edit' => array(),
-                    'admin_index' => array('perm_admin'),
                     'admin_set_default' => array(),
                     'index' => array('*'),
                     'view' => array('*'),
@@ -478,7 +497,7 @@ class ACLComponent extends Component
                     'getSubmodulesStatus' => array(),
                     'getSubmoduleQuickUpdateForm' => array(),
                     'getWorkers' => array(),
-                    'getVersion' => array('*'),
+                    'getVersion' => array('perm_auth'),
                     'idTranslator' => ['OR' => [
                         'host_org_user',
                         'perm_site_admin',
@@ -486,9 +505,10 @@ class ACLComponent extends Component
                     'import' => array(),
                     'index' => array(),
                     'ondemandAction' => array(),
-                    'postTest' => array('perm_sync'),
+                    'postTest' => array('*'),
                     'previewEvent' => array(),
                     'previewIndex' => array(),
+                    'compareServers' => [],
                     'pull' => array(),
                     'purgeSessions' => array(),
                     'push' => array(),
@@ -513,6 +533,7 @@ class ACLComponent extends Component
                     'uploadFile' => array(),
                     'viewDeprecatedFunctionUse' => array(),
                     'killAllWorkers' => ['perm_site_admin'],
+                'cspReport' => ['*'],
             ),
             'shadowAttributes' => array(
                     'accept' => array('perm_add'),
@@ -527,6 +548,7 @@ class ACLComponent extends Component
                     'generateCorrelation' => array(),
                     'index' => array('*'),
                     'view' => array('*'),
+                    'viewPicture' => array('*'),
             ),
             'sharingGroups' => array(
                     'add' => array('perm_sharing_group'),
@@ -605,6 +627,7 @@ class ACLComponent extends Component
                     'taxonomyMassUnhide' => array('perm_tagger'),
                     'toggleRequired' => array('perm_site_admin'),
                     'update' => array(),
+                    'import' => [],
                     'view' => array('*'),
                     'unhideTag' => array('perm_tagger'),
                     'hideTag' => array('perm_tagger'),
@@ -675,6 +698,7 @@ class ACLComponent extends Component
                     'verifyCertificate' => array(),
                     'verifyGPG' => array(),
                     'view' => array('*'),
+                    'getGpgPublicKey' => array('*'),
             ),
             'userSettings' => array(
                     'index' => array('*'),
@@ -709,7 +733,7 @@ class ACLComponent extends Component
     );
 
     private $dynamicChecks = [];
-    
+
     public function __construct(ComponentCollection $collection, $settings = array())
     {
         parent::__construct($collection, $settings);
@@ -735,6 +759,9 @@ class ACLComponent extends Component
                 throw new MethodNotAllowedException('Adding users has been disabled on this instance.');
             }
             return true;
+        };
+        $this->dynamicChecks['delegation_enabled'] = function (array $user) {
+            return (bool)Configure::read('MISP.delegation');
         };
     }
 

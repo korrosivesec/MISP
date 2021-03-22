@@ -6,24 +6,11 @@
     switch ($scope) {
         case 'event':
             $id = h($event['Event']['id']);
-            if (!empty($required_taxonomies)) {
-                foreach ($required_taxonomies as $k => $v) {
-                    foreach ($tags as $tag) {
-                        $temp_tag = explode(':', $tag['Tag']['name']);
-                        if (count($temp_tag) > 1) {
-                            if ($temp_tag[0] == $v) {
-                                unset($required_taxonomies[$k]);
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (!empty($required_taxonomies)) {
-                    echo sprintf(
-                        'Missing taxonomies: <span class="red bold">%s</span><br />',
-                        implode(', ', $required_taxonomies)
-                    );
-                }
+            if (!empty($missingTaxonomies)) {
+                echo __(
+                    'Missing taxonomies: <span class="red bold">%s</span><br>',
+                    implode(', ', $missingTaxonomies)
+                );
             }
             break;
         case 'attribute':
@@ -76,7 +63,7 @@
         );
         if (!empty($tag['Tag']['id'])) {
             $span_tag = sprintf(
-                '<a href="%s" style="%s" class="%s" title="%s">%s</a>',
+                '<a href="%s" style="%s" class="%s" title="%s" data-tag-id="%s">%s</a>',
                 sprintf(
                     '%s%s%s',
                     $baseurl,
@@ -86,6 +73,7 @@
                 $aStyle,
                 $aClass,
                 $aText,
+                h($tag['Tag']['id']),
                 isset($aTextModified) ? $aTextModified : $aText
             );
         } else {

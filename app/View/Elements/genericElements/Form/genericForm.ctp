@@ -4,6 +4,7 @@
      *
      * Simply pass a JSON with the following keys set:
      * - model: The model used to create the form (such as Attribute, Event)
+     * - description: text description of the form
      * - fields: an array with each element generating an input field
      *     - field is the actual field name (such as org_id, name, etc) which is required
      *     - optional fields: default, type, options, placeholder, label - these are passed directly to $this->Form->input(),
@@ -51,7 +52,7 @@
                     }
                     $params['class'] = $class;
                 } else {
-                    if (!empty($fieldData['type']) && $fieldData['type'] != 'checkbox') {
+                    if (!empty($fieldData['type']) && ($fieldData['type'] !== 'checkbox' && $fieldData['type'] !== 'radio')) {
                         $params['class'] = 'span6';
                     }
                 }
@@ -129,7 +130,7 @@
         );
     } else {
         echo sprintf(
-            '<div class="%s">%s<fieldset><legend>%s</legend>%s<div class="clear" style="padding-bottom:10px;">%s</div>%s</fieldset>%s%s%s</div>',
+            '<div class="%s">%s<fieldset><legend>%s</legend>%s<div class="clear">%s</div>%s</fieldset>%s%s%s</div>',
             empty($data['skip_side_menu']) ? 'form' : 'menuless-form',
             $formCreate,
             empty($data['title']) ? h(Inflector::humanize($this->request->params['action'])) . ' ' . $modelForForm : h($data['title']),
@@ -144,7 +145,7 @@
 ?>
 <script type="text/javascript">
     var fieldsArray = <?php echo json_encode($fieldsArrayForPersistence); ?>;
-    $(document).ready(function() {
+    $(function() {
         popoverStartup();
     });
 </script>

@@ -7,6 +7,8 @@ App::uses('SendEmail', 'Tools');
 
 /**
  * @property Log $Log
+ * @property Organisation $Organisation
+ * @property Role $Role
  */
 class User extends AppModel
 {
@@ -209,7 +211,7 @@ class User extends AppModel
         ),
         'Post',
         'UserSetting',
-        'AuthKey'
+        // 'AuthKey' - readd once the initial update storm is over
     );
 
     public $actsAs = array(
@@ -222,6 +224,21 @@ class User extends AppModel
         'Trim',
         'Containable'
     );
+
+    public function __construct($id = false, $table = null, $ds = null) {
+        parent::__construct();
+        $this->AdminSetting = ClassRegistry::init('AdminSetting');
+        $db_version = $this->AdminSetting->find('first', [
+            'recursive' => -1,
+            'conditions' => ['setting' => 'db_version'],
+            'fields' => ['value']
+        ]);
+        if ($db_version['AdminSetting']['value'] >= 62) {
+            $this->bindModel([
+                'hasMany' => ['AuthKey']
+            ], false);
+        }
+    }
 
     /** @var CryptGpgExtended|null|false */
     private $gpg;
@@ -626,39 +643,50 @@ class User extends AppModel
     // get the current user and rearrange it to be in the same format as in the auth component
     public function getAuthUser($id)
     {
-        $user = $this->getUserById($id);
-        if (empty($user)) {
-            return $user;
+        if (empty($id)) {
+            throw new InvalidArgumentException('Invalid user ID.');
         }
-        return $this->rearrangeToAuthForm($user);
+        $conditions = ['User.id' => $id];
+        return $this->getAuthUserByConditions($conditions);
     }
 
     // get the current user and rearrange it to be in the same format as in the auth component
-    public function getAuthUserByAuthkey($id)
+    public function getAuthUserByAuthkey($authkey)
     {
-        $conditions = array('User.authkey' => $id);
-        $user = $this->find('first', array('conditions' => $conditions, 'recursive' => -1,'contain' => array('Organisation', 'Role', 'Server')));
-        if (empty($user)) {
-            return $user;
+        if (empty($authkey)) {
+            throw new InvalidArgumentException('Invalid user auth key.');
         }
-        return $this->rearrangeToAuthForm($user);
+        $conditions = array('User.authkey' => $authkey);
+        return $this->getAuthUserByConditions($conditions);
     }
 
     public function getAuthUserByExternalAuth($auth_key)
     {
+        if (empty($auth_key)) {
+            throw new InvalidArgumentException('Invalid user external auth key.');
+        }
         $conditions = array(
             'User.external_auth_key' => $auth_key,
             'User.external_auth_required' => true
         );
-        $user = $this->find('first', array(
+        return $this->getAuthUserByConditions($conditions);
+    }
+
+    /**
+     * @param array $conditions
+     * @return array|null
+     */
+    private function getAuthUserByConditions(array $conditions)
+    {
+        $user = $this->find('first', [
             'conditions' => $conditions,
             'recursive' => -1,
-            'contain' => array(
+            'contain' => [
                 'Organisation',
                 'Role',
-                'Server'
-            )
-        ));
+                'Server',
+            ],
+        ]);
         if (empty($user)) {
             return $user;
         }
@@ -681,9 +709,6 @@ class User extends AppModel
         $user['User']['Role'] = $user['Role'];
         $user['User']['Organisation'] = $user['Organisation'];
         $user['User']['Server'] = $user['Server'];
-        if (isset($user['UserSetting'])) {
-            $user['User']['UserSetting'] = $user['UserSetting'];
-        }
         return $user['User'];
     }
 
@@ -847,53 +872,22 @@ class User extends AppModel
         return $gpgTool->fetchGpgKey($fingerprint);
     }
 
+    /**
+     * Returns fields that should be fetched from database.
+     * @return array
+     */
     public function describeAuthFields()
     {
-        $fields = array();
-        $fields = array_merge($fields, array_keys($this->getColumnTypes()));
-        foreach ($fields as $k => $field) {
-            if (in_array($field, array('gpgkey', 'certif_public'))) {
-                unset($fields[$k]);
-            }
-        }
-        $fields = array_values($fields);
-        $relatedModels = array_keys($this->belongsTo);
-        foreach ($relatedModels as $relatedModel) {
+        $fields = $this->schema();
+        // Do not include keys, because they are big and usually not necessary
+        unset($fields['gpgkey']);
+        unset($fields['certif_public']);
+        $fields = array_keys($fields);
+
+        foreach ($this->belongsTo as $relatedModel => $foo) {
             $fields[] = $relatedModel . '.*';
         }
         return $fields;
-    }
-
-    public function getMembersCount($org_id = false)
-    {
-        // for Organizations List
-        $conditions = array();
-        $findType = 'all';
-        if ($org_id !== false) {
-            $findType = 'first';
-            $conditions = array('User.org_id' => $org_id);
-        }
-        $fields = array('org_id', 'COUNT(User.id) AS num_members');
-        $params = array(
-                'fields' => $fields,
-                'recursive' => -1,
-                'group' => array('org_id'),
-                'order' => array('org_id'),
-                'conditions' => $conditions
-        );
-        $orgs = $this->find($findType, $params);
-        if (empty($orgs)) {
-            return 0;
-        }
-        if ($org_id !== false) {
-            return $orgs[0]['num_members'];
-        } else {
-            $usersPerOrg = [];
-            foreach ($orgs as $key => $value) {
-                $usersPerOrg[$value['User']['org_id']] = $value[0]['num_members'];
-            }
-            return $usersPerOrg;
-        }
     }
 
     public function findAdminsResponsibleForUser($user)
@@ -951,7 +945,7 @@ class User extends AppModel
         if ($result) {
             $this->id = $user['User']['id'];
             $this->saveField('password', $password);
-            $this->saveField('change_pw', '1');
+            $this->updateField($user['User'], 'change_pw', 1);
             if ($simpleReturn) {
                 return true;
             } else {
@@ -967,10 +961,9 @@ class User extends AppModel
 
     public function getOrgAdminsForOrg($org_id, $excludeUserId = false)
     {
-        $adminRoles = $this->Role->find('list', array(
-            'recursive' => -1,
+        $adminRoles = $this->Role->find('column', array(
             'conditions' => array('perm_admin' => 1),
-            'fields' => array('Role.id', 'Role.id')
+            'fields' => array('Role.id')
         ));
         $conditions = array(
             'User.org_id' => $org_id,
@@ -1126,7 +1119,7 @@ class User extends AppModel
         if (empty(Configure::read('Security.advanced_authkeys'))) {
             $oldKey = $this->data['User']['authkey'];
             $newkey = $this->generateAuthKey();
-            $this->saveField('authkey', $newkey);
+            $this->updateField($updatedUser['User'], 'authkey', $newkey);
             $this->extralog(
                     $user,
                     'reset_auth_key',
@@ -1196,6 +1189,27 @@ class User extends AppModel
         $syslog->write('notice', "$description -- $action" . (empty($fieldResult) ? '' : ' -- ' . $result['Log']['change']));
     }
 
+    /**
+     * @return array|null
+     * @throws Exception
+     */
+    public function getGpgPublicKey()
+    {
+        $email = Configure::read('GnuPG.email');
+        if (!$email) {
+            throw new Exception("Configuration option 'GnuPG.email' is not set, public key cannot be exported.");
+        }
+
+        $cryptGpg = $this->initializeGpg();
+        $fingerprint = $cryptGpg->getFingerprint($email);
+        if (!$fingerprint) {
+            return null;
+        }
+
+        $publicKey = $cryptGpg->exportPublicKey($fingerprint);
+        return array($fingerprint, $publicKey);
+    }
+
     public function getOrgActivity($orgId, $params=array())
     {
         $conditions = array();
@@ -1247,24 +1261,6 @@ class User extends AppModel
             'orgId' => $orgId
         );
         return $data;
-    }
-
-    /*
-     *  Set the monitoring flag in Configure for the current user
-     *  Reads the state from redis
-     */
-    public function setMonitoring($user)
-    {
-        if (
-            !empty(Configure::read('Security.user_monitoring_enabled'))
-        ) {
-            $redis = $this->setupRedis();
-            if (!empty($redis->sismember('misp:monitored_users', $user['id']))) {
-                Configure::write('Security.monitored', 1);
-                return true;
-            }
-        }
-        Configure::write('Security.monitored', 0);
     }
 
     public function registerUser($added_by, $registration, $org_id, $role_id) {
@@ -1346,6 +1342,28 @@ class User extends AppModel
         $user['last_login'] = $user['current_login'];
         $user['current_login'] = time();
         return $this->save($user, true, array('id', 'last_login', 'current_login'));
+    }
+
+    /**
+     * Update field in user model and also set `date_modified`
+     *
+     * @param array $user
+     * @param string $name
+     * @param mixed $value
+     * @throws Exception
+     */
+    public function updateField(array $user, $name, $value)
+    {
+        if (!isset($user['id'])) {
+            throw new InvalidArgumentException("Invalid user object provided.");
+        }
+        $success = $this->save([
+            'id' => $user['id'],
+            $name => $value,
+        ], true, ['id', $name, 'date_modified']);
+        if (!$success) {
+            throw new RuntimeException("Could not save setting $name for user {$user['id']}.");
+        }
     }
 
     /**

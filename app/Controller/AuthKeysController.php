@@ -1,7 +1,9 @@
 <?php
-
 App::uses('AppController', 'Controller');
 
+/**
+ * @property AuthKey $AuthKey
+ */
 class AuthKeysController extends AppController
 {
     public $components = array(
@@ -11,10 +13,10 @@ class AuthKeysController extends AppController
     );
 
     public $paginate = array(
-            'limit' => 60,
-            'order' => array(
-                'AuthKey.name' => 'ASC'
-            )
+        'limit' => 60,
+        'order' => array(
+            'AuthKey.name' => 'ASC',
+        )
     );
 
     public function index($id = false)
@@ -24,18 +26,36 @@ class AuthKeysController extends AppController
             $this->set('user_id', $id);
             $conditions['AND'][] = ['AuthKey.user_id' => $id];
         }
+        $keyUsageEnabled = Configure::read('MISP.log_user_ips') && Configure::read('MISP.log_user_ips_authkeys');
         $this->CRUD->index([
-            'filters' => ['User.username', 'authkey', 'comment', 'User.id'],
-            'quickFilters' => ['authkey', 'comment'],
-            'contain' => ['User'],
-            'exclude_fields' => ['authkey'],
+            'filters' => ['User.email', 'authkey_start', 'authkey_end', 'comment', 'User.id'],
+            'quickFilters' => ['comment', 'authkey_start', 'authkey_end', 'User.email'],
+            'contain' => ['User.id', 'User.email'],
             'conditions' => $conditions,
+            'afterFind' => function (array $authKeys) use ($keyUsageEnabled) {
+                if ($keyUsageEnabled) {
+                    $keyIds = Hash::extract($authKeys, "{n}.AuthKey.id");
+                    $lastUsedById = $this->AuthKey->getLastUsageForKeys($keyIds);
+                }
+                foreach ($authKeys as &$authKey) {
+                    if ($keyUsageEnabled) {
+                        $lastUsed = $lastUsedById[$authKey['AuthKey']['id']];
+                        $authKey['AuthKey']['last_used'] = $lastUsed;
+                    }
+                    unset($authKey['AuthKey']['authkey']);
+                }
+                return $authKeys;
+            }
         ]);
         if ($this->IndexFilter->isRest()) {
             return $this->restResponsePayload;
         }
-        $this->set('metaGroup', $this->_isAdmin ? 'admin' : 'globalActions');
-        $this->set('metaAction', 'authkeys_index');
+        $this->set('title_for_layout', __('Auth Keys'));
+        $this->set('keyUsageEnabled', $keyUsageEnabled);
+        $this->set('menuData', [
+            'menuList' => $this->_isSiteAdmin() ? 'admin' : 'globalActions',
+            'menuItem' => 'authkeys_index',
+        ]);
     }
 
     public function delete($id)
@@ -57,18 +77,22 @@ class AuthKeysController extends AppController
 
     public function add($user_id = false)
     {
-        $this->set('menuData', array('menuList' => $this->_isSiteAdmin() ? 'admin' : 'globalActions', 'menuItem' => 'authKeyAdd'));
         $params = [
             'displayOnSuccess' => 'authkey_display',
-            'saveModelVariable' => ['authkey_raw']
+            'saveModelVariable' => ['authkey_raw'],
+            'override' => ['authkey' => null], // do not allow to use own key, always generate random one
+            'afterFind' => function ($authKey) { // remove hashed key from response
+                unset($authKey['AuthKey']['authkey']);
+                return $authKey;
+            }
         ];
         $selectConditions = [];
         if (!$this->_isSiteAdmin()) {
             $selectConditions['AND'][] = ['User.id' => $this->Auth->user('id')];
-            $params['override'] = ['user_id' => $this->Auth->user('id')];
+            $params['override']['user_id'] = $this->Auth->user('id');
         } else if ($user_id) {
             $selectConditions['AND'][] = ['User.id' => $user_id];
-            $params['override'] = ['user_id' => $user_id];
+            $params['override']['user_id'] = $user_id;
         }
         $this->CRUD->add($params);
         if ($this->IndexFilter->isRest()) {
@@ -82,18 +106,39 @@ class AuthKeysController extends AppController
             ])
         ];
         $this->set(compact('dropdownData'));
+        $this->set('menuData', [
+            'menuList' => $this->_isSiteAdmin() ? 'admin' : 'globalActions',
+            'menuItem' => 'authKeyAdd',
+        ]);
+        $this->set('validity', Configure::read('Security.advanced_authkeys_validity'));
     }
 
     public function view($id = false)
     {
-        $this->set('menuData', array('menuList' => $this->_isSiteAdmin() ? 'admin' : 'globalActions', 'menuItem' => 'authKeyView'));
         $this->CRUD->view($id, [
             'contain' => ['User.id', 'User.email'],
             'conditions' => $this->__prepareConditions(),
+            'afterFind' => function (array $authKey) {
+                unset($authKey['AuthKey']['authkey']);
+                return $authKey;
+            }
         ]);
         if ($this->IndexFilter->isRest()) {
             return $this->restResponsePayload;
         }
+
+        if (Configure::read('MISP.log_user_ips') && Configure::read('MISP.log_user_ips_authkeys')) {
+            list($keyUsage, $lastUsed, $uniqueIps) = $this->AuthKey->getKeyUsage($id);
+            $this->set('keyUsage', $keyUsage);
+            $this->set('lastUsed', $lastUsed);
+            $this->set('uniqueIps', $uniqueIps);
+        }
+
+        $this->set('title_for_layout', __('Auth Key'));
+        $this->set('menuData', [
+            'menuList' => $this->_isSiteAdmin() ? 'admin' : 'globalActions',
+            'menuItem' => 'authKeyView',
+        ]);
     }
 
     /**

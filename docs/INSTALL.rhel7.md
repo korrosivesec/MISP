@@ -280,13 +280,15 @@ installCoreRHEL () {
     # In case you get "internal compiler error: Killed (program cc1plus)"
     # You ran out of memory.
     # Create some swap
-    sudo dd if=/dev/zero of=/var/swap.img bs=1024k count=4000
-    sudo mkswap /var/swap.img
-    sudo swapon /var/swap.img
+    TEMP_DIR=$(mktemp -d)
+    TEMP_SWAP=${TEMP_DIR}/swap.img
+    sudo dd if=/dev/zero of=${TEMP_SWAP} bs=1024k count=4000
+    sudo mkswap ${TEMP_SWAP}
+    sudo swapon ${TEMP_SWAP}
     # And compile again
-    $SUDO_WWW make -j3 pyLIEF
-    sudo swapoff /var/swap.img
-    sudo rm /var/swap.img
+    ${SUDO_WWW} make -j3 pyLIEF
+    sudo swapoff ${TEMP_SWAP}
+    sudo rm -r ${TEMP_DIR}
   fi
 
   # The following adds a PYTHONPATH to where the pyLIEF module has been compiled
@@ -303,8 +305,8 @@ installCoreRHEL () {
   # BROKEN: This needs to be tested on RHEL/CentOS
   ##sudo apt-get install cmake libcaca-dev liblua5.3-dev -y
   cd /tmp
-  [[ ! -d "faup" ]] && $SUDO_CMD git clone git://github.com/stricaud/faup.git faup
-  [[ ! -d "gtcaca" ]] && $SUDO_CMD git clone git://github.com/stricaud/gtcaca.git gtcaca
+  [[ ! -d "faup" ]] && $SUDO_CMD git clone https://github.com/stricaud/faup.git faup
+  [[ ! -d "gtcaca" ]] && $SUDO_CMD git clone https://github.com/stricaud/gtcaca.git gtcaca
   sudo chown -R ${MISP_USER}:${MISP_USER} faup gtcaca
   cd gtcaca
   $SUDO_CMD mkdir -p build
@@ -472,12 +474,12 @@ EOF
 
   sudo systemctl restart rh-mariadb102-mariadb
 
-  scl enable rh-mariadb102 "mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e 'CREATE DATABASE $DBNAME;'"
-  scl enable rh-mariadb102 "mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e \"GRANT USAGE on *.* to $DBUSER_MISP@localhost IDENTIFIED by '$DBPASSWORD_MISP';\""
-  scl enable rh-mariadb102 "mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e \"GRANT ALL PRIVILEGES on $DBNAME.* to '$DBUSER_MISP'@'localhost';\""
-  scl enable rh-mariadb102 "mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e 'FLUSH PRIVILEGES;'"
+  scl enable rh-mariadb102 "mysql -h $DBHOST -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e 'CREATE DATABASE $DBNAME;'"
+  scl enable rh-mariadb102 "mysql -h $DBHOST -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e \"GRANT USAGE on *.* to $DBUSER_MISP@localhost IDENTIFIED by '$DBPASSWORD_MISP';\""
+  scl enable rh-mariadb102 "mysql -h $DBHOST -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e \"GRANT ALL PRIVILEGES on $DBNAME.* to '$DBUSER_MISP'@'localhost';\""
+  scl enable rh-mariadb102 "mysql -h $DBHOST -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e 'FLUSH PRIVILEGES;'"
 
-  $SUDO_WWW cat $PATH_TO_MISP/INSTALL/MYSQL.sql | sudo scl enable rh-mariadb102 "mysql -u $DBUSER_MISP -p$DBPASSWORD_MISP $DBNAME"
+  $SUDO_WWW cat $PATH_TO_MISP/INSTALL/MYSQL.sql | sudo scl enable rh-mariadb102 "mysql -h $DBHOST -u $DBUSER_MISP -p$DBPASSWORD_MISP $DBNAME"
 }
 # <snippet-end 1_prepareDB_RHEL.sh>
 ```

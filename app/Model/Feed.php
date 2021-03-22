@@ -32,7 +32,10 @@ class Feed extends AppModel
             'rule' => array('urlOrExistingFilepath')
         ),
         'provider' => 'valueNotEmpty',
-        'name' => 'valueNotEmpty',
+        'name' => [
+            'rule' => 'valueNotEmpty',
+            'required' => true,
+        ],
         'event_id' => array(
             'rule' => array('numeric'),
             'message' => 'Please enter a numeric event ID or leave this field blank.',
@@ -180,7 +183,7 @@ class Feed extends AppModel
         $tmpFile->write(trim($data));
         unset($data);
 
-        return $tmpFile->csv();
+        return $tmpFile->intoParsedCsv();
     }
 
     /**
@@ -364,18 +367,18 @@ class Feed extends AppModel
         $redisResultToAttributePosition = [];
 
         foreach ($attributes as $k => $attribute) {
-            if (in_array($attribute['type'], $this->Attribute->nonCorrelatingTypes)) {
+            if (in_array($attribute['type'], $this->Attribute->nonCorrelatingTypes, true)) {
                 continue; // attribute type is not correlateable
             }
             if (!empty($attribute['disable_correlation'])) {
                 continue; // attribute correlation is disabled
             }
 
-            if (in_array($attribute['type'], $compositeTypes)) {
+            if (in_array($attribute['type'], $compositeTypes, true)) {
                 list($value1, $value2) = explode('|', $attribute['value']);
                 $parts = [$value1];
 
-                if (!in_array($attribute['type'], $this->Attribute->primaryOnlyCorrelatingTypes)) {
+                if (!in_array($attribute['type'], $this->Attribute->primaryOnlyCorrelatingTypes, true)) {
                     $parts[] = $value2;
                 }
             } else {
@@ -442,12 +445,17 @@ class Feed extends AppModel
                     if (!isset($event[$scope][$sourceId])) {
                         $event[$scope][$sourceId] = $source[$scope];
                     }
+
                     $attributePosition = $redisResultToAttributePosition[$hitIds[$k]];
-                    $attributes[$attributePosition][$scope][] = $source[$scope];
+                    $alreadyAttached = isset($attributes[$attributePosition][$scope]) &&
+                        in_array($sourceId, array_column($attributes[$attributePosition][$scope], 'id'));
+                    if (!$alreadyAttached) {
+                        $attributes[$attributePosition][$scope][] = $source[$scope];
+                    }
                     $sourceHasHit = true;
                 }
             }
-            // Append also exact MISP feed event UUID
+            // Append also exact MISP feed or server event UUID
             // TODO: This can be optimised in future to do that in one pass
             if ($sourceHasHit && ($scope === 'Server' || $source[$scope]['source_format'] === 'misp')) {
                 $pipe = $redis->multi(Redis::PIPELINE);
@@ -475,7 +483,9 @@ class Feed extends AppModel
                         $attributePosition = $eventUuidHitPosition[$sourceHitPos];
                         foreach ($attributes[$attributePosition][$scope] as $tempKey => $tempFeed) {
                             if ($tempFeed['id'] == $feedId) {
-                                $attributes[$attributePosition][$scope][$tempKey]['event_uuids'][] = $eventUuid;
+                                if (empty($attributes[$attributePosition][$scope][$tempKey]['event_uuids']) || !in_array($eventUuid, $attributes[$attributePosition][$scope][$tempKey]['event_uuids'])) {
+                                    $attributes[$attributePosition][$scope][$tempKey]['event_uuids'][] = $eventUuid;
+                                }
                                 break;
                             }
                         }
@@ -597,11 +607,6 @@ class Feed extends AppModel
                 'MISP-uuid' => Configure::read('MISP.uuid'),
             )
         );
-
-        // Enable gzipped responses if PHP has 'gzdecode' method
-        if (function_exists('gzdecode')) {
-            $result['header']['Accept-Encoding'] = 'gzip';
-        }
 
         $commit = $this->checkMIPSCommit();
         if ($commit) {
@@ -992,7 +997,7 @@ class Feed extends AppModel
      * @return bool
      * @throws Exception
      */
-    public function saveFreetextFeedData($feed, $data, $user, $jobId = false)
+    public function saveFreetextFeedData(array $feed, array $data, array $user, $jobId = false)
     {
         $this->Event = ClassRegistry::init('Event');
 
@@ -1035,25 +1040,14 @@ class Feed extends AppModel
             }
         }
         if ($feed['Feed']['fixed_event']) {
-            $existsAttributes = $this->Event->Attribute->find('all', array(
+            $existsAttributesValueToId = $this->Event->Attribute->find('list', array(
                 'conditions' => array(
                     'Attribute.deleted' => 0,
                     'Attribute.event_id' => $event['Event']['id']
                 ),
                 'recursive' => -1,
-                'fields' => array('id', 'value1', 'value2')
+                'fields' => array('value', 'id')
             ));
-            $existsAttributesValueToId = array();
-            foreach ($existsAttributes as $t) {
-                if (!empty($t['Attribute']['value2'])) {
-                    $value = $t['Attribute']['value1'] . '|' . $t['Attribute']['value2'];
-                } else {
-                    $value = $t['Attribute']['value1'];
-                }
-                // Since event values are unique, it is OK to put value into key
-                $existsAttributesValueToId[$value] = $t['Attribute']['id'];
-            }
-            unset($existsAttributes);
 
             // Create event diff. After this cycle, `$data` will contains just attributes that do not exists in current
             // event and in `$existsAttributesValueToId` will contains just attributes that do not exists in current feed.
@@ -1093,7 +1087,6 @@ class Feed extends AppModel
             return true;
         }
 
-        $data = array_values($data);
         $uniqueValues = array();
         foreach ($data as $key => $value) {
             if (isset($uniqueValues[$value['value']])) {
@@ -1467,7 +1460,7 @@ class Feed extends AppModel
                     }
                 }
                 $this->create();
-                if (!$this->save($feed, true, array('name', 'provider', 'url', 'rules', 'source_format', 'fixed_event', 'delta_merge', 'override_ids', 'publish', 'settings', 'tag_id', 'default', 'lookup_visible'))) {
+                if (!$this->save($feed, true, array('name', 'provider', 'url', 'rules', 'source_format', 'fixed_event', 'delta_merge', 'override_ids', 'publish', 'settings', 'tag_id', 'default', 'lookup_visible', 'headers'))) {
                     $results['fails']++;
                 } else {
                     $results['successes']++;
@@ -1759,29 +1752,21 @@ class Feed extends AppModel
 
         $request = $this->__createFeedRequest($feed['Feed']['headers']);
 
-        if ($followRedirect) {
-            $response = $this->getFollowRedirect($HttpSocket, $uri, $request);
-        } else {
-            $response = $HttpSocket->get($uri, array(), $request);
+        try {
+            if ($followRedirect) {
+                $response = $this->getFollowRedirect($HttpSocket, $uri, $request);
+            } else {
+                $response = $HttpSocket->get($uri, array(), $request);
+            }
+        } catch (Exception $e) {
+            throw new Exception("Fetching the '$uri' failed with exception: {$e->getMessage()}", 0, $e);
         }
 
-        if ($response === false) {
-            throw new Exception("Could not reach '$uri'.");
-        } else if ($response->code != 200) { // intentionally !=
+        if ($response->code != 200) { // intentionally !=
             throw new Exception("Fetching the '$uri' failed with HTTP error {$response->code}: {$response->reasonPhrase}");
         }
 
         $data = $response->body;
-
-        $contentEncoding = $response->getHeader('Content-Encoding');
-        if ($contentEncoding === 'gzip') {
-            $data = gzdecode($data);
-            if ($data === false) {
-                throw new Exception("Fetching the '$uri' failed, response should be gzip encoded, but gzip decoding failed.");
-            }
-        } else if ($contentEncoding) {
-            throw new Exception("Fetching the '$uri' failed, because remote server returns unsupported content encoding '$contentEncoding'");
-        }
 
         $contentType = $response->getHeader('Content-Type');
         if ($contentType === 'application/zip') {

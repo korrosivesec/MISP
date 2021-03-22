@@ -13,6 +13,67 @@ class EventShell extends AppShell
     public $uses = array('Event', 'Post', 'Attribute', 'Job', 'User', 'Task', 'Allowedlist', 'Server', 'Organisation');
     public $tasks = array('ConfigLoad');
 
+    public function getOptionParser()
+    {
+        $parser = parent::getOptionParser();
+        $parser->addSubcommand('import', array(
+            'help' => __('Import event from file into MISP.'),
+            'parser' => array(
+                'arguments' => array(
+                    'user_id' => ['help' => __('User ID that will owner of uploaded event.'), 'required' => true],
+                    'file' => ['help' => __('Path to JSON MISP file, can be gzipped or bz2 compressed.'), 'required' => true],
+                ),
+                'options' => [
+                    'take-ownership' => ['boolean' => true],
+                    'publish' => ['boolean' => true],
+                ],
+            )
+        ));
+        return $parser;
+    }
+
+    public function import()
+    {
+        list($userId, $path) = $this->args;
+        $user = $this->getUser($userId);
+
+        if (!file_exists($path)) {
+            $this->error("File '$path' does not exists.");
+        }
+        if (!is_readable($path)) {
+            $this->error("File '$path' is not readable.");
+        }
+
+        $pathInfo = pathinfo($path);
+        if ($pathInfo['extension'] === 'gz') {
+            $content = file_get_contents("compress.zlib://$path");
+            $extension = pathinfo($pathInfo['filename'], PATHINFO_EXTENSION);
+        } else if ($pathInfo['extension'] === 'bz2') {
+            $content = file_get_contents("compress.bzip2://$path");
+            $extension = pathinfo($pathInfo['filename'], PATHINFO_EXTENSION);
+        } else {
+            $content = file_get_contents($path);
+            $extension = $pathInfo['extension'];
+        }
+
+        if ($content === false) {
+            $this->error("Could not read content from '$path'.");
+        }
+
+        $isXml = $extension === 'xml';
+        $takeOwnership = $this->param('take_ownership');
+        $publish = $this->param('publish');
+        $results = $this->Event->addMISPExportFile($user, $content, $isXml, $takeOwnership, $publish);
+
+        foreach ($results as $result) {
+            if (is_numeric($result['result'])) {
+                $this->out("Event #{$result['id']}: {$result['info']} imported.");
+            } else {
+                $this->out("Could not import event because of validation errors: " . json_encode($result['validationIssues']));
+            }
+        }
+    }
+
     public function doPublish()
     {
         $this->ConfigLoad->execute();
@@ -49,7 +110,7 @@ class EventShell extends AppShell
         $timeStart = time();
         $userId = $this->args[0];
         $id = $this->args[1];
-        $user = $this->User->getAuthUser($userId);
+        $user = $this->getUser($userId);
         $this->Job->id = $id;
         $export_type = $this->args[2];
         file_put_contents('/tmp/test', $export_type);
@@ -140,10 +201,7 @@ class EventShell extends AppShell
         $jobId = $this->args[1];
         $eventId = $this->args[2];
         $oldpublish = $this->args[3];
-        $user = $this->User->getUserById($userId);
-        if (empty($user)) {
-            die("Invalid user ID '$userId' provided.");
-        }
+        $user = $this->getUser($userId);
         $this->Event->sendAlertEmail($eventId, $user, $oldpublish, $jobId);
     }
 
@@ -156,10 +214,7 @@ class EventShell extends AppShell
         $userId = $this->args[3];
         $processId = $this->args[4];
 
-        $user = $this->User->getUserById($userId);
-        if (empty($user)) {
-            die("Invalid user ID '$userId' provided.");
-        }
+        $user = $this->getUser($userId);
         $result = $this->Event->sendContactEmail($id, $message, $all, $user);
         $this->Job->saveStatus($processId, $result);
     }
@@ -241,10 +296,7 @@ class EventShell extends AppShell
         $passAlong = $this->args[1];
         $jobId = $this->args[2];
         $userId = $this->args[3];
-        $user = $this->User->getAuthUser($userId);
-        if (empty($user)) {
-            die("Invalid user ID '$userId' provided.");
-        }
+        $user = $this->getUser($userId);
         $job = $this->Job->read(null, $jobId);
         $this->Event->Behaviors->unload('SysLogLogable.SysLogLogable');
         $result = $this->Event->publish($id, $passAlong);
@@ -268,10 +320,7 @@ class EventShell extends AppShell
         $passAlong = $this->args[1];
         $jobId = $this->args[2];
         $userId = $this->args[3];
-        $user = $this->User->getAuthUser($userId);
-        if (empty($user)) {
-            die("Invalid user ID '$userId' provided.");
-        }
+        $user = $this->getUser($userId);
         $job = $this->Job->read(null, $jobId);
         $this->Event->Behaviors->unload('SysLogLogable.SysLogLogable');
         $result = $this->Event->publish_sightings($id, $passAlong);
@@ -295,7 +344,7 @@ class EventShell extends AppShell
         $jobId = $this->args[1];
         $userId = $this->args[2];
         $passAlong = $this->args[3];
-        $user = $this->User->getAuthUser($userId);
+        $user = $this->getUser($userId);
         $job = $this->Job->read(null, $jobId);
         $this->GalaxyCluster = ClassRegistry::init('GalaxyCluster');
         $result = $this->GalaxyCluster->publish($clusterId, $passAlong=$passAlong);
@@ -319,8 +368,7 @@ class EventShell extends AppShell
             die('Usage: ' . $this->Server->command_line_functions['enrichment'] . PHP_EOL);
         }
         $userId = $this->args[0];
-        $user = $this->User->getAuthUser($userId);
-        if (empty($user)) die('Invalid user.');
+        $user = $this->getUser($userId);
         $eventId = $this->args[1];
         $modulesRaw = $this->args[2];
         try {
@@ -419,5 +467,18 @@ class EventShell extends AppShell
         $job['Job']['date_modified'] = date("Y-m-d H:i:s");
         $job['Job']['message'] = __('Recovery complete. Event #%s recovered, using %s log entries.', $id, $result);
         $this->Job->save($job);
+    }
+
+    /**
+     * @param int $userId
+     * @return array
+     */
+    private function getUser($userId)
+    {
+        $user = $this->User->getAuthUser($userId);
+        if (empty($user)) {
+            $this->error("User with ID $userId does not exists.");
+        }
+        return $user;
     }
 }

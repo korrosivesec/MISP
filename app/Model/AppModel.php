@@ -41,7 +41,8 @@ class AppModel extends Model
 
     public $inserted_ids = array();
 
-    private $__redisConnection = null;
+    /** @var null|Redis */
+    private static $__redisConnection = null;
 
     private $__profiler = array();
 
@@ -55,6 +56,7 @@ class AppModel extends Model
         parent::__construct($id, $table, $ds);
 
         $this->name = get_class($this);
+        $this->findMethods['column'] = true;
     }
 
     // deprecated, use $db_changes
@@ -87,7 +89,7 @@ class AppModel extends Model
         45 => false, 46 => false, 47 => false, 48 => false, 49 => false, 50 => false,
         51 => false, 52 => false, 53 => false, 54 => false, 55 => false, 56 => false,
         57 => false, 58 => false, 59 => false, 60 => false, 61 => false, 62 => false,
-        63 => true,
+        63 => true, 64 => false, 65 => false
     );
 
     public $advanced_updates_description = array(
@@ -1536,6 +1538,36 @@ class AppModel extends Model
                 $indexArray[] = array('galaxy_cluster_blocklists', 'cluster_uuid');
                 $indexArray[] = array('galaxy_cluster_blocklists', 'cluster_orgc');
                 break;
+            case 64:
+                $sqlArray[] = "CREATE TABLE IF NOT EXISTS `cerebrates` (
+                    `id` int(11) NOT NULL AUTO_INCREMENT,
+                    `name` varchar(191) NOT NULL,
+                    `url` varchar(255) NOT NULL,
+                    `authkey` varchar(40) CHARACTER SET ascii COLLATE ascii_general_ci NULL,
+                    `open` tinyint(1) DEFAULT 0,
+                    `org_id` int(11) NOT NULL,
+                    `pull_orgs` tinyint(1) DEFAULT 0,
+                    `pull_sharing_groups` tinyint(1) DEFAULT 0,
+                    `self_signed` tinyint(1) DEFAULT 0,
+                    `cert_file` varchar(255) DEFAULT NULL,
+                    `client_cert_file` varchar(255) DEFAULT NULL,
+                    `internal` tinyint(1) NOT NULL DEFAULT 0,
+                    `skip_proxy` tinyint(1) NOT NULL DEFAULT 0,
+                    `description` text,
+                    PRIMARY KEY (`id`),
+                    KEY `url` (`url`),
+                    KEY `org_id` (`org_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+                break;
+            case 65:
+                $sqlArray[] = "CREATE TABLE IF NOT EXISTS `correlation_exclusions` (
+                    `id` int(11) NOT NULL AUTO_INCREMENT,
+                    `value` text NOT NULL,
+                    `from_json` tinyint(1) default 0,
+                    PRIMARY KEY (`id`),
+                    INDEX `value` (`value`(255))
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+                break;
             case 'fixNonEmptySharingGroupID':
                 $sqlArray[] = 'UPDATE `events` SET `sharing_group_id` = 0 WHERE `distribution` != 4;';
                 $sqlArray[] = 'UPDATE `attributes` SET `sharing_group_id` = 0 WHERE `distribution` != 4;';
@@ -1606,10 +1638,8 @@ class AppModel extends Model
                 break;
             default:
                 return false;
-                break;
         }
 
-        $now = new DateTime();
         // switch MISP instance live to false
         if ($liveOff) {
             $this->Server = Classregistry::init('Server');
@@ -1622,7 +1652,7 @@ class AppModel extends Model
         $this->__setUpdateProgress(0, $total_update_count, $command);
         $str_index_array = array();
         foreach($indexArray as $toIndex) {
-            $str_index_array[] = __('Indexing ') . sprintf('%s -> %s', $toIndex[0], $toIndex[1]);
+            $str_index_array[] = __('Indexing %s -> %s', $toIndex[0], $toIndex[1]);
         }
         $this->__setUpdateCmdMessages(array_merge($sqlArray, $str_index_array));
         $flagStop = false;
@@ -1658,10 +1688,10 @@ class AppModel extends Model
                         'email' => 'SYSTEM',
                         'action' => 'update_database',
                         'user_id' => 0,
-                        'title' => __('Successfuly executed the SQL query for ') . $command,
+                        'title' => __('Successfully executed the SQL query for ') . $command,
                         'change' => sprintf(__('The executed SQL query was: %s'), $sql)
                     ));
-                    $this->__setUpdateResMessages($i, sprintf(__('Successfuly executed the SQL query for %s'), $command));
+                    $this->__setUpdateResMessages($i, sprintf(__('Successfully executed the SQL query for %s'), $command));
                 } catch (Exception $e) {
                     $errorMessage = $e->getMessage();
                     $this->Log->create();
@@ -1715,14 +1745,13 @@ class AppModel extends Model
                     }
                 }
             }
-            $this->__setUpdateProgress(count($sqlArray)+count($indexArray), false);
+            $this->__setUpdateProgress(count($sqlArray) + count($indexArray), false);
          }
         if ($clean) {
             $this->cleanCacheFiles();
         }
         if ($liveOff) {
-            $liveSetting = 'MISP.live';
-            $this->Server->serverSettingsSaveValue($liveSetting, true);
+            $this->Server->serverSettingsSaveValue('MISP.live', true);
         }
         if (!$flagStop && $errorCount == 0) {
             $this->__postUpdate($command);
@@ -1975,7 +2004,7 @@ class AppModel extends Model
                 }
             }
             $db_version = $db_version[0];
-            $updates = $this->__findUpgrades($db_version['AdminSetting']['value']);
+            $updates = $this->findUpgrades($db_version['AdminSetting']['value']);
             if ($processId) {
                 $job = $this->Job->find('first', array(
                     'conditions' => array('Job.id' => $processId)
@@ -2111,9 +2140,18 @@ class AppModel extends Model
             }
         }
         if ($requiresLogout) {
-            $this->updateDatabase('destroyAllSessions');
+            $this->refreshSessions();
         }
         return true;
+    }
+
+    /**
+     * Update date_modified for all users, this will ensure that all users will refresh their session data.
+     */
+    private function refreshSessions()
+    {
+        $this->User = ClassRegistry::init('User');
+        $this->User->updateAll(['date_modified' => time()]);
     }
 
     private function __setUpdateProgress($current, $total=false, $toward_db_version=false)
@@ -2311,7 +2349,7 @@ class AppModel extends Model
         }
     }
 
-    private function __findUpgrades($db_version)
+    public function findUpgrades($db_version)
     {
         $updates = array();
         if (strpos($db_version, '.')) {
@@ -2440,8 +2478,8 @@ class AppModel extends Model
      */
     public function setupRedisWithException()
     {
-        if ($this->__redisConnection) {
-            return $this->__redisConnection;
+        if (self::$__redisConnection) {
+            return self::$__redisConnection;
         }
 
         if (!class_exists('Redis')) {
@@ -2466,7 +2504,7 @@ class AppModel extends Model
             throw new Exception("Could not select Redis database $database: {$redis->getLastError()}");
         }
 
-        $this->__redisConnection = $redis;
+        self::$__redisConnection = $redis;
         return $redis;
     }
 
@@ -2540,19 +2578,6 @@ class AppModel extends Model
         $client = new ElasticSearchClient();
         $client->initTool();
         $this->elasticSearchClient = $client;
-    }
-
-    public function checkVersionRequirements($versionString, $minVersion)
-    {
-        $version = explode('.', $versionString);
-        $minVersion = explode('.', $minVersion);
-        if (count($version) > $minVersion) {
-            return true;
-        }
-        if (count($version) == 1) {
-            return $minVersion <= $version;
-        }
-        return ($version[0] >= $minVersion[0] && $version[1] >= $minVersion[1] && $version[2] >= $minVersion[2]);
     }
 
     // generate a generic subquery - options needs to include conditions
@@ -2697,12 +2722,12 @@ class AppModel extends Model
      * @return array[]
      * @throws JsonException
      */
-    protected function setupSyncRequest(array $server)
+    protected function setupSyncRequest(array $server, $model = 'Server')
     {
         $version = implode('.', $this->checkMISPVersion());
         $request = array(
             'header' => array(
-                'Authorization' => $server['Server']['authkey'],
+                'Authorization' => $server[$model]['authkey'],
                 'Accept' => 'application/json',
                 'Content-Type' => 'application/json',
                 'MISP-version' => $version,
@@ -2727,7 +2752,7 @@ class AppModel extends Model
     {
         static $versionArray;
         if ($versionArray === null) {
-            $file = new File(ROOT . DS . 'VERSION.json', true);
+            $file = new File(ROOT . DS . 'VERSION.json');
             $versionArray = $this->jsonDecode($file->read());
             $file->close();
         }
@@ -3001,6 +3026,66 @@ class AppModel extends Model
                 $this->Server->save($server);
             }
         }
+    }
+
+    /**
+     * Find method that allows to fetch just one column from database.
+     * @param $state
+     * @param $query
+     * @param array $results
+     * @return array
+     * @throws Exception
+     */
+    protected function _findColumn($state, $query, $results = array())
+    {
+        if ($state === 'before') {
+            if (count($query['fields']) === 1) {
+                if (strpos($query['fields'][0], '.') === false) {
+                    $query['fields'][0] = $this->alias . '.' . $query['fields'][0];
+                }
+
+                $query['column'] = $query['fields'][0];
+                if (isset($query['unique']) && $query['unique']) {
+                    $query['fields'] = array("DISTINCT {$query['fields'][0]}");
+                } else {
+                    $query['fields'] = array($query['fields'][0]);
+                }
+            } else {
+                throw new Exception("Invalid number of column, expected one, " . count($query['fields']) . " given");
+            }
+
+            if (!isset($query['recursive'])) {
+                $query['recursive'] = -1;
+            }
+
+            return $query;
+        }
+
+        // Faster version of `Hash::extract`
+        foreach (explode('.', $query['column']) as $part) {
+            $results = array_column($results, $part);
+        }
+        return $results;
+    }
+
+    /**
+     * @param string $field
+     * @param AppModel $model
+     * @param array $conditions
+     */
+    public function addCountField($field, AppModel $model, array $conditions)
+    {
+        $db = $this->getDataSource();
+        $subQuery = $db->buildStatement(
+            array(
+                'fields'     => ['COUNT(*)'],
+                'table'      => $db->fullTableName($model),
+                'alias'      => $model->alias,
+                'conditions' => $conditions,
+            ),
+            $model
+        );
+        $this->virtualFields[$field] = $subQuery;
     }
 
     /**

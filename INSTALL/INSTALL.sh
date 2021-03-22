@@ -104,6 +104,8 @@ MISPvars () {
 
   # MISP configuration variables
   PATH_TO_MISP="${PATH_TO_MISP:-/var/www/MISP}"
+  PATH_TO_MISP_SCRIPTS="${PATH_TO_MISP}/app/files/scripts"
+
 
   FQDN="${FQDN:-misp.local}"
 
@@ -206,6 +208,19 @@ usage () {
   space
   echo -e "Recommended is either a barebone MISP install (ideal for syncing from other instances) or"
   echo -e "MISP + modules - ${SCRIPT_NAME} -c -M"
+  echo -e ""
+  echo -e ""
+  echo -e "Interesting environment variables that get considered are:"
+  echo -e ""
+  echo -e "MISP_USER/MISP_PASSWORD # Local username on machine, default: misp/opensslGeneratedPassword"
+  echo -e ""
+  echo -e "PATH_TO_MISP # Where MISP will be installed, default: /var/www/MISP (recommended)"
+  echo -e ""
+  echo -e "DBHOST/DBNAME # database hostname, MISP database name, default: localhost/misp"
+  echo -e "DBUSER_ADMIN/DBPASSWORD_ADMIN # MySQL admin user, default: root/opensslGeneratedPassword"
+  echo -e "DBUSER_MISP/DBPASSWORD_MISP # MISP database user, default: misp/opensslGeneratedPassword"
+  echo -e ""
+  echo -e "You need to export the variable(s) to be taken into account. (or specified in-line when invoking INSTALL.sh)"
   space
 }
 
@@ -605,7 +620,7 @@ preInstall () {
   DBPASSWORD_MISP=$(cat database.php |grep -v // |grep -e password |tr -d \' |tr -d \ |tr -d , |tr -d \> |cut -f 2 -d=)
   DBUSER_MISP=$(cat database.php |grep -v // |grep -e login |tr -d \' |tr -d \ |tr -d , |tr -d \> |cut -f 2 -d=)
   DBNAME=$(cat database.php |grep -v // |grep -e database |tr -d \' |tr -d \ |tr -d , |tr -d \> |cut -f 2 -d=)
-  AUTH_KEY=$(mysql --disable-column-names -B  -u $DBUSER_MISP -p"$DBPASSWORD_MISP" $DBNAME -e 'SELECT authkey FROM users WHERE role_id=1 LIMIT 1')
+  AUTH_KEY=$(mysql -h $DBHOST --disable-column-names -B  -u $DBUSER_MISP -p"$DBPASSWORD_MISP" $DBNAME -e 'SELECT authkey FROM users WHERE role_id=1 LIMIT 1')
 
   # Check if db exists
   [[ -d "/var/lib/mysql/$DBNAME" ]] && MISP_DB_DIR_EXISTS=1 && echo "/var/lib/mysql/$DBNAME exists"
@@ -621,7 +636,7 @@ upgrade () {
   Autho="Authorization:"
   CT="Content-Type:"
   MISP_BASEURL="https://127.0.0.1"
-  cd $PATH_TO_MISP/app ; $SUDO_WWW php composer.phar update $SUDO_WWW php composer.phar self-update
+  ${SUDO_WWW} sh -c "cd ${PATH_TO_MISP}/app ; php composer.phar update ; php composer.phar self-update"
 
   for URN in $(echo "galaxies warninglists noticelists objectTemplates taxonomies"); do
     curl --header "$Autho $AUTH_KEY" --header "$Acc $headerJSON" --header "$CT $headerJSON" -k -X POST $MISP_BASEURL/$URN/update
@@ -660,6 +675,7 @@ kaliSpaceSaver () {
   echo "${RED}Not implement${NC}"
 }
 
+# FIXME: Kali now uses kali/kali instead of root/toor
 # Because Kali is l33t we make sure we DO NOT run as root
 kaliOnTheR0ckz () {
   totalRoot=$(df -k | grep /$ |awk '{ print $2 }')
@@ -761,6 +777,7 @@ installRNG () {
 kaliUpgrade () {
   debug "Running various Kali upgrade tasks"
   checkAptLock
+  sudo DEBIAN_FRONTEND=noninteractive apt update
   sudo DEBIAN_FRONTEND=noninteractive apt install --only-upgrade bash libc6 -y
   sudo DEBIAN_FRONTEND=noninteractive apt autoremove -y
 }
@@ -876,7 +893,7 @@ installDeps () {
   mariadb-server \
   apache2 apache2-doc apache2-utils \
   python3-dev python3-pip libpq5 libjpeg-dev libfuzzy-dev ruby asciidoctor \
-  libxml2-dev libxslt1-dev zlib1g-dev python3-setuptools expect
+  libxml2-dev libxslt1-dev zlib1g-dev python3-setuptools
 
   installRNG
 }
@@ -1002,7 +1019,7 @@ gitPullAllRCLOCAL () {
 
 # Main composer function
 composer () {
-  sudo mkdir /var/www/.composer ; sudo chown ${WWW_USER}:${WWW_USER} /var/www/.composer
+  sudo mkdir -p /var/www/.composer ; sudo chown ${WWW_USER}:${WWW_USER} /var/www/.composer
   ${SUDO_WWW} sh -c "cd ${PATH_TO_MISP}/app ; php composer.phar install"
 }
 
@@ -1056,8 +1073,8 @@ nuke () {
   sleep 10
   sudo rm -rvf /usr/local/src/{misp-modules,viper,mail_to_misp,LIEF,faup}
   sudo rm -rvf /var/www/MISP
-  sudo mysqladmin drop misp
-  sudo mysql -e "DROP USER misp@localhost"
+  sudo mysqladmin -h $DBHOST drop misp
+  sudo mysql -h $DBHOST -e "DROP USER misp@localhost"
 }
 
 # Final function to let the user know what happened
@@ -1170,8 +1187,6 @@ installCoreDeps () {
 
   # install Mitre's STIX and its dependencies by running the following commands:
   sudo apt-get install python3-dev python3-pip libxml2-dev libxslt1-dev zlib1g-dev python-setuptools -qy
-
-  sudo apt install expect -qy
 }
 
 # Install Php 7.4 dependencies
@@ -1184,8 +1199,9 @@ installDepsPhp74 () {
   libapache2-mod-php \
   php php-cli \
   php-dev \
-  php-json php-xml php-mysql php-opcache php-readline php-mbstring php-zip \
+  php-json php-xml php-mysql php7.4-opcache php-readline php-mbstring php-zip \
   php-redis php-gnupg \
+  php-intl php-bcmath \
   php-gd
 
   for key in upload_max_filesize post_max_size max_execution_time max_input_time memory_limit
@@ -1237,6 +1253,7 @@ installDepsPhp72 () {
   php-dev \
   php-json php-xml php-mysql php7.2-opcache php-readline php-mbstring php-zip \
   php-redis php-gnupg \
+  php-intl php-bcmath \
   php-gd
 
   for key in upload_max_filesize post_max_size max_execution_time max_input_time memory_limit
@@ -1266,51 +1283,39 @@ installDepsPhp70 () {
 }
 
 prepareDB () {
-  if [[ ! -e /var/lib/mysql/misp/users.ibd ]]; then
+  if sudo test ! -e "/var/lib/mysql/mysql/"; then
+    #Make sure initial tables are created in MySQL
+    debug "Install mysql tables"
+    sudo mysql_install_db --user=mysql --basedir=/usr --datadir=/var/lib/mysql
+    sudo service mysql start
+  fi
+
+  if sudo test ! -e "/var/lib/mysql/misp/"; then
+    debug "Start mysql"
+    sudo service mysql start
+
     debug "Setting up database"
+    # Kill the anonymous users
+    sudo mysql -h $DBHOST -e "DROP USER IF EXISTS ''@'localhost'"
+    # Because our hostname varies we'll use some Bash magic here.
+    sudo mysql -h $DBHOST -e "DROP USER IF EXISTS ''@'$(hostname)'"
+    # Kill off the demo database
+    sudo mysql -h $DBHOST -e "DROP DATABASE IF EXISTS test"
+    # No root remote logins
+    sudo mysql -h $DBHOST -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1')"
+    # Make sure that NOBODY can access the server without a password
+    sudo mysqladmin -h $DBHOST -u "${DBUSER_ADMIN}" password "${DBPASSWORD_ADMIN}"
+    # Make our changes take effect
+    sudo mysql -h $DBHOST -e "FLUSH PRIVILEGES"
 
-    # FIXME: If user 'misp' exists, and has a different password, the below WILL fail.
-    # Add your credentials if needed, if sudo has NOPASS, comment out the relevant lines
-    if [[ "${PACKER}" == "1" ]]; then
-      pw="Password1234"
-    else
-      pw=${MISP_PASSWORD}
-    fi
-
-    expect -f - <<-EOF
-      set timeout 10
-
-      spawn sudo -k mysql_secure_installation
-      expect "*?assword*"
-      send -- "${pw}\r"
-      expect "Enter current password for root (enter for none):"
-      send -- "\r"
-      expect "Set root password?"
-      send -- "y\r"
-      expect "New password:"
-      send -- "${DBPASSWORD_ADMIN}\r"
-      expect "Re-enter new password:"
-      send -- "${DBPASSWORD_ADMIN}\r"
-      expect "Remove anonymous users?"
-      send -- "y\r"
-      expect "Disallow root login remotely?"
-      send -- "y\r"
-      expect "Remove test database and access to it?"
-      send -- "y\r"
-      expect "Reload privilege tables now?"
-      send -- "y\r"
-      expect eof
-EOF
-    sudo apt-get purge -y expect ; sudo apt autoremove -qy
-  fi 
-
-  sudo mysql -u ${DBUSER_ADMIN} -p${DBPASSWORD_ADMIN} -e "CREATE DATABASE ${DBNAME};"
-  sudo mysql -u ${DBUSER_ADMIN} -p${DBPASSWORD_ADMIN} -e "CREATE USER '${DBUSER_MISP}'@'localhost' IDENTIFIED BY '${DBPASSWORD_MISP}';"
-  sudo mysql -u ${DBUSER_ADMIN} -p${DBPASSWORD_ADMIN} -e "GRANT USAGE ON *.* to ${DBUSER_MISP}@localhost;"
-  sudo mysql -u ${DBUSER_ADMIN} -p${DBPASSWORD_ADMIN} -e "GRANT ALL PRIVILEGES on ${DBNAME}.* to '${DBUSER_MISP}'@'localhost';"
-  sudo mysql -u ${DBUSER_ADMIN} -p${DBPASSWORD_ADMIN} -e "FLUSH PRIVILEGES;"
-  # Import the empty MISP database from MYSQL.sql
-  ${SUDO_WWW} cat ${PATH_TO_MISP}/INSTALL/MYSQL.sql | mysql -u ${DBUSER_MISP} -p${DBPASSWORD_MISP} ${DBNAME}
+    sudo mysql -h $DBHOST -u "${DBUSER_ADMIN}" -p"${DBPASSWORD_ADMIN}" -e "CREATE DATABASE ${DBNAME};"
+    sudo mysql -h $DBHOST -u "${DBUSER_ADMIN}" -p"${DBPASSWORD_ADMIN}" -e "CREATE USER '${DBUSER_MISP}'@'localhost' IDENTIFIED BY '${DBPASSWORD_MISP}';"
+    sudo mysql -h $DBHOST -u "${DBUSER_ADMIN}" -p"${DBPASSWORD_ADMIN}" -e "GRANT USAGE ON *.* to '${DBUSER_MISP}'@'localhost';"
+    sudo mysql -h $DBHOST -u "${DBUSER_ADMIN}" -p"${DBPASSWORD_ADMIN}" -e "GRANT ALL PRIVILEGES on ${DBNAME}.* to '${DBUSER_MISP}'@'localhost';"
+    sudo mysql -h $DBHOST -u "${DBUSER_ADMIN}" -p"${DBPASSWORD_ADMIN}" -e "FLUSH PRIVILEGES;"
+    # Import the empty MISP database from MYSQL.sql
+    ${SUDO_WWW} cat ${PATH_TO_MISP}/INSTALL/MYSQL.sql | mysql -h $DBHOST -u "${DBUSER_MISP}" -p"${DBPASSWORD_MISP}" ${DBNAME}
+  fi
 }
 
 apacheConfig () {
@@ -1350,96 +1355,98 @@ apacheConfig () {
 installCore () {
   debug "Installing ${LBLUE}MISP${NC} core"
   # Download MISP using git in the /var/www/ directory.
-  sudo mkdir ${PATH_TO_MISP}
-  sudo chown $WWW_USER:$WWW_USER ${PATH_TO_MISP}
-  cd ${PATH_TO_MISP}
-  $SUDO_WWW git clone https://github.com/MISP/MISP.git ${PATH_TO_MISP}
-  $SUDO_WWW git submodule update --init --recursive
-  # Make git ignore filesystem permission differences for submodules
-  $SUDO_WWW git submodule foreach --recursive git config core.filemode false
+  if [[ ! -d ${PATH_TO_MISP} ]]; then
+    sudo mkdir ${PATH_TO_MISP}
+    sudo chown ${WWW_USER}:${WWW_USER} ${PATH_TO_MISP}
+    false; while [[ $? -ne 0 ]]; do checkAptLock; ${SUDO_WWW} git clone https://github.com/MISP/MISP.git ${PATH_TO_MISP}; done
+    false; while [[ $? -ne 0 ]]; do checkAptLock; ${SUDO_WWW} git -C ${PATH_TO_MISP} submodule update --progress --init --recursive; done
+    # Make git ignore filesystem permission differences for submodules
+    ${SUDO_WWW} git -C ${PATH_TO_MISP} submodule foreach --recursive git config core.filemode false
 
-  # Make git ignore filesystem permission differences
-  $SUDO_WWW git config core.filemode false
+    # Make git ignore filesystem permission differences
+    ${SUDO_WWW} git -C ${PATH_TO_MISP} config core.filemode false
 
-  # Create a python3 virtualenv
-  $SUDO_WWW virtualenv -p python3 ${PATH_TO_MISP}/venv
+    # Create a python3 virtualenv
+    ${SUDO_WWW} virtualenv -p python3 ${PATH_TO_MISP}/venv
 
-  # make pip happy
-  sudo mkdir /var/www/.cache/
-  sudo chown $WWW_USER:$WWW_USER /var/www/.cache
+    # make pip happy
+    sudo mkdir /var/www/.cache/
+    sudo chown ${WWW_USER}:${WWW_USER} /var/www/.cache
 
-  cd ${PATH_TO_MISP}/app/files/scripts
-  $SUDO_WWW git clone https://github.com/CybOXProject/python-cybox.git
-  $SUDO_WWW git clone https://github.com/STIXProject/python-stix.git
-  $SUDO_WWW git clone https://github.com/MAECProject/python-maec.git
+    for dependency in CybOXProject/python-cybox STIXProject/python-stix MAECProject/python-maec CybOXProject/mixbox; do
+      false; while [[ $? -ne 0 ]]; do checkAptLock; ${SUDO_WWW} git clone https://github.com/${dependency}.git ${PATH_TO_MISP_SCRIPTS}/${dependency##*/}; done
+      ${SUDO_WWW} git -C ${PATH_TO_MISP_SCRIPTS}/${dependency##*/} config core.filemode false
+      ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install ${PATH_TO_MISP_SCRIPTS}/${dependency##*/}
+    done
 
-  # install mixbox to accommodate the new STIX dependencies:
-  $SUDO_WWW git clone https://github.com/CybOXProject/mixbox.git
-  cd ${PATH_TO_MISP}/app/files/scripts/mixbox
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install .
-  cd ${PATH_TO_MISP}/app/files/scripts/python-cybox
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install .
-  cd ${PATH_TO_MISP}/app/files/scripts/python-stix
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install .
-  cd $PATH_TO_MISP/app/files/scripts/python-maec
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install .
-  # install STIX2.0 library to support STIX 2.0 export:
-  cd ${PATH_TO_MISP}/cti-python-stix2
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install .
+    debug "Install python-stix2"
+    ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install ${PATH_TO_MISP}/cti-python-stix2
 
-  # install PyMISP
-  cd ${PATH_TO_MISP}/PyMISP
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install .
-  # FIXME: Remove libfaup etc once the egg has the library baked-in
-  sudo apt-get install cmake libcaca-dev liblua5.3-dev -y
-  cd /tmp
-  [[ ! -d "faup" ]] && $SUDO_CMD git clone git://github.com/stricaud/faup.git faup
-  [[ ! -d "gtcaca" ]] && $SUDO_CMD git clone git://github.com/stricaud/gtcaca.git gtcaca
-  sudo chown -R ${MISP_USER}:${MISP_USER} faup gtcaca
-  cd gtcaca
-  $SUDO_CMD mkdir -p build
-  cd build
-  $SUDO_CMD cmake .. && $SUDO_CMD make
-  sudo make install
-  cd ../../faup
-  $SUDO_CMD mkdir -p build
-  cd build
-  $SUDO_CMD cmake .. && $SUDO_CMD make
-  sudo make install
-  sudo ldconfig
+    debug "Install PyMISP"
+    ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install ${PATH_TO_MISP}/PyMISP
 
-  # install pydeep
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install git+https://github.com/kbandla/pydeep.git
+    # FIXME: Remove libfaup etc once the egg has the library baked-in
+    sudo apt-get install cmake libcaca-dev liblua5.3-dev -y
+    cd /tmp
+    false; while [[ $? -ne 0 ]]; do [[ ! -d "faup" ]] && ${SUDO_CMD} git clone https://github.com/stricaud/faup.git faup; done
+    false; while [[ $? -ne 0 ]]; do [[ ! -d "gtcaca" ]] && ${SUDO_CMD} git clone https://github.com/stricaud/gtcaca.git gtcaca; done
+    sudo chown -R ${MISP_USER}:${MISP_USER} faup gtcaca
+    cd gtcaca
+    ${SUDO_CMD} mkdir -p build
+    cd build
+    ${SUDO_CMD} cmake .. && ${SUDO_CMD} make
+    sudo make install
+    cd ../../faup
+    ${SUDO_CMD} mkdir -p build
+    cd build
+    ${SUDO_CMD} cmake .. && ${SUDO_CMD} make
+    sudo make install
+    sudo ldconfig
 
-  # install lief
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install lief
+    # install pydeep
+    false; while [[ $? -ne 0 ]]; do checkAptLock; ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install git+https://github.com/kbandla/pydeep.git; done
 
-  # install zmq needed by mispzmq
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install zmq redis
+    # install lief
+    ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install lief
 
-  # install python-magic
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install python-magic
+    # install zmq needed by mispzmq
+    ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install zmq redis
 
-  # install plyara
-  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install plyara
+    # install python-magic
+    ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install python-magic
+
+    # install plyara
+    ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install plyara
+  else
+    debug "Trying to git pull existing install"
+    ${SUDO_WWW} git pull -C ${PATH_TO_MISP}
+    false; while [[ $? -ne 0 ]]; do ${SUDO_WWW} git -C ${PATH_TO_MISP} submodule update --progress --init --recursive; done
+
+    ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install -U setuptools pip lief zmq redis python-magic plyara
+    for dependency in CybOXProject/python-cybox STIXProject/python-stix MAECProject/python-maec CybOXProject/mixbox; do
+      false; while [[ $? -ne 0 ]]; do checkAptLock; ${SUDO_WWW} git -C ${PATH_TO_MISP_SCRIPTS}/${dependency##*/} pull; done
+      ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install -U ${PATH_TO_MISP_SCRIPTS}/${dependency##*/}
+    done
+
+    ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install -U ${PATH_TO_MISP}/cti-python-stix2
+    ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install -U ${PATH_TO_MISP}/PyMISP
+    false; while [[ $? -ne 0 ]]; do checkAptLock; ${SUDO_WWW} ${PATH_TO_MISP}/venv/bin/pip install -U git+https://github.com/kbandla/pydeep.git; done
+fi
 }
 
 installCake () {
   debug "Installing CakePHP"
-  # Once done, install CakeResque along with its dependencies 
-  # if you intend to use the built in background jobs:
-  cd ${PATH_TO_MISP}/app
   # Make composer cache happy
   # /!\ composer on Ubuntu when invoked with sudo -u doesn't set $HOME to /var/www but keeps it /home/misp \!/
-  sudo mkdir /var/www/.composer ; sudo chown $WWW_USER:$WWW_USER /var/www/.composer
-  $SUDO_WWW php composer.phar install
+  sudo mkdir -p /var/www/.composer ; sudo chown ${WWW_USER}:${WWW_USER} /var/www/.composer
+  ${SUDO_WWW} sh -c "cd ${PATH_TO_MISP}/app ;php composer.phar install"
 
   # Enable CakeResque with php-redis
   sudo phpenmod redis
   sudo phpenmod gnupg
 
   # To use the scheduler worker for scheduled tasks, do the following:
-  $SUDO_WWW cp -fa ${PATH_TO_MISP}/INSTALL/setup/config.php ${PATH_TO_MISP}/app/Plugin/CakeResque/Config/config.php
+  ${SUDO_WWW} cp -fa ${PATH_TO_MISP}/INSTALL/setup/config.php ${PATH_TO_MISP}/app/Plugin/CakeResque/Config/config.php
 
   # If you have multiple MISP instances on the same system, don't forget to have a different Redis per MISP instance for the CakeResque workers
   # The default Redis port can be updated in Plugin/CakeResque/Config/config.php
@@ -1452,16 +1459,16 @@ permissions () {
   sudo chmod -R 750 ${PATH_TO_MISP}
   sudo chmod -R g+ws ${PATH_TO_MISP}/app/tmp
   sudo chmod -R g+ws ${PATH_TO_MISP}/app/files
-  sudo chmod -R g+ws $PATH_TO_MISP/app/files/scripts/tmp
+  sudo chmod -R g+ws ${PATH_TO_MISP}/app/files/scripts/tmp
 }
 
 configMISP () {
   debug "Generating ${LBLUE}MISP${NC} config files"
   # There are 4 sample configuration files in ${PATH_TO_MISP}/app/Config that need to be copied
-  $SUDO_WWW cp -a ${PATH_TO_MISP}/app/Config/bootstrap.default.php ${PATH_TO_MISP}/app/Config/bootstrap.php
-  $SUDO_WWW cp -a ${PATH_TO_MISP}/app/Config/database.default.php ${PATH_TO_MISP}/app/Config/database.php
-  $SUDO_WWW cp -a ${PATH_TO_MISP}/app/Config/core.default.php ${PATH_TO_MISP}/app/Config/core.php
-  $SUDO_WWW cp -a ${PATH_TO_MISP}/app/Config/config.default.php ${PATH_TO_MISP}/app/Config/config.php
+  ${SUDO_WWW} cp -a ${PATH_TO_MISP}/app/Config/bootstrap.default.php ${PATH_TO_MISP}/app/Config/bootstrap.php
+  ${SUDO_WWW} cp -a ${PATH_TO_MISP}/app/Config/database.default.php ${PATH_TO_MISP}/app/Config/database.php
+  ${SUDO_WWW} cp -a ${PATH_TO_MISP}/app/Config/core.default.php ${PATH_TO_MISP}/app/Config/core.php
+  ${SUDO_WWW} cp -a ${PATH_TO_MISP}/app/Config/config.default.php ${PATH_TO_MISP}/app/Config/config.php
 
   echo "<?php
   class DATABASE_CONFIG {
@@ -1478,7 +1485,7 @@ configMISP () {
                   'prefix' => '',
                   'encoding' => 'utf8',
           );
-  }" | $SUDO_WWW tee $PATH_TO_MISP/app/Config/database.php
+  }" | ${SUDO_WWW} tee ${PATH_TO_MISP}/app/Config/database.php
 
   # Important! Change the salt key in ${PATH_TO_MISP}/app/Config/config.php
   # The salt key must be a string at least 32 bytes long.
@@ -1487,7 +1494,7 @@ configMISP () {
   # delete the user from mysql and log in again using the default admin credentials (admin@admin.test / admin)
 
   # and make sure the file permissions are still OK
-  sudo chown -R $WWW_USER:$WWW_USER ${PATH_TO_MISP}/app/Config
+  sudo chown -R ${WWW_USER}:${WWW_USER} ${PATH_TO_MISP}/app/Config
   sudo chmod -R 750 ${PATH_TO_MISP}/app/Config
 }
 
@@ -1554,6 +1561,7 @@ coreCAKE () {
   # Various plugin sightings settings
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Plugin.Sightings_policy" 0
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Plugin.Sightings_anonymise" false
+  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Plugin.Sightings_anonymise_as" 1
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Plugin.Sightings_range" 365
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Plugin.Sightings_sighting_db_enable" false
 
@@ -1589,11 +1597,14 @@ coreCAKE () {
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.default_event_threat_level" 4
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.newUserText" "Dear new MISP user,\\n\\nWe would hereby like to welcome you to the \$org MISP community.\\n\\n Use the credentials below to log into MISP at \$misp, where you will be prompted to manually change your password to something of your own choice.\\n\\nUsername: \$username\\nPassword: \$password\\n\\nIf you have any questions, don't hesitate to contact us at: \$contact.\\n\\nBest regards,\\nYour \$org MISP support team"
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.passwordResetText" "Dear MISP user,\\n\\nA password reset has been triggered for your account. Use the below provided temporary password to log into MISP at \$misp, where you will be prompted to manually change your password to something of your own choice.\\n\\nUsername: \$username\\nYour temporary password: \$password\\n\\nIf you have any questions, don't hesitate to contact us at: \$contact.\\n\\nBest regards,\\nYour \$org MISP support team"
-  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.enableEventBlacklisting" true
-  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.enableOrgBlacklisting" true
+  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.enableEventBlocklisting" true
+  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.enableOrgBlocklisting" true
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.log_client_ip" false
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.log_auth" false
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.disableUserSelfManagement" false
+  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.disable_user_login_change" false
+  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.disable_user_password_change" false
+  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.disable_user_add" false
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.block_event_alert" false
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.block_event_alert_tag" "no-alerts=\"true\""
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.block_old_event_alert" false
@@ -1614,6 +1625,10 @@ coreCAKE () {
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "MISP.event_view_filter_fields" "id, uuid, value, comment, type, category, Tag.name"
 
   # Force defaults to make MISP Server Settings less GREEN
+  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "debug" 0
+  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Security.auth_enforced" false
+  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Security.rest_client_baseurl" ""
+  $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Security.advanced_authkeys" false
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Security.password_policy_length" 12
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Security.password_policy_complexity" '/^((?=.*\d)|(?=.*\W+))(?![\n])(?=.*[A-Z])(?=.*[a-z]).*$|.{16,}/'
   $SUDO_WWW $RUN_PHP -- $CAKE Admin setSetting "Security.self_registration_message" "If you would like to send us a registration request, please fill out the form below. Make sure you fill out as much information as possible in order to ease the task of the administrators."
@@ -1629,7 +1644,7 @@ coreCAKE () {
 updateGOWNT () {
   # AUTH_KEY Place holder in case we need to **curl** somehing in the future
   # 
-  $SUDO_WWW $RUN_MYSQL -- mysql -u $DBUSER_MISP -p$DBPASSWORD_MISP misp -e "SELECT authkey FROM users;" | tail -1 > /tmp/auth.key
+  $SUDO_WWW $RUN_MYSQL -- mysql -h $DBHOST -u $DBUSER_MISP -p$DBPASSWORD_MISP misp -e "SELECT authkey FROM users;" | tail -1 > /tmp/auth.key
   AUTH_KEY=$(cat /tmp/auth.key)
   rm /tmp/auth.key
 
@@ -1682,7 +1697,7 @@ logRotation () {
 backgroundWorkers () {
   debug "Setting up background workers"
   # To make the background workers start on boot
-  sudo chmod +x $PATH_TO_MISP/app/Console/worker/start.sh
+  sudo chmod +x ${PATH_TO_MISP}/app/Console/worker/start.sh
 
   if [ ! -e /etc/rc.local ]
   then
@@ -1720,10 +1735,16 @@ mispmodules () {
   cd /usr/local/src/
   sudo apt-get install cmake libcaca-dev liblua5.3-dev -y
   ## TODO: checkUsrLocalSrc in main doc
-  debug "Cloning misp-modules"
-  false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone https://github.com/MISP/misp-modules.git; done
-  [[ ! -d "faup" ]] && false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone git://github.com/stricaud/faup.git faup; done
-  [[ ! -d "gtcaca" ]] && false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone git://github.com/stricaud/gtcaca.git gtcaca; done
+  if [[ ! -d /usr/local/src/misp-modules ]]; then
+    debug "Cloning misp-modules"
+    false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone https://github.com/MISP/misp-modules.git; done
+  else
+    false; while [[ $? -ne 0 ]]; do $SUDO_CMD git -C /usr/local/src/misp-modules pull; done
+  fi
+
+  # Install faup/gtcaca
+  [[ ! -d "faup" ]] && false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone https://github.com/stricaud/faup.git faup; done
+  [[ ! -d "gtcaca" ]] && false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone https://github.com/stricaud/gtcaca.git gtcaca; done
   sudo chown -R ${MISP_USER}:${MISP_USER} faup gtcaca
   # Install gtcaca
   cd gtcaca
@@ -1731,14 +1752,15 @@ mispmodules () {
   cd build
   $SUDO_CMD cmake .. && $SUDO_CMD make
   sudo make install
-  cd ../../faup
+  cd /usr/local/src/faup
   # Install faup
   $SUDO_CMD mkdir -p build
   cd build
   $SUDO_CMD cmake .. && $SUDO_CMD make
   sudo make install
   sudo ldconfig
-  cd ../../misp-modules
+
+  cd /usr/local/src/misp-modules
   # some misp-modules dependencies
   sudo apt install libpq5 libjpeg-dev tesseract-ocr libpoppler-cpp-dev imagemagick libopencv-dev zbar-tools libzbar0 libzbar-dev libfuzzy-dev -y
   # If you build an egg, the user you build it as need write permissions in the CWD
@@ -1747,10 +1769,10 @@ mispmodules () {
   $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install -I -r REQUIREMENTS
   sudo chgrp staff .
   $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install -I .
-  ## sudo gem install asciidoctor-pdf --pre
+  $SUDO_WWW ${PATH_TO_MISP}/venv/bin/pip install censys pyfaup
 
   # Start misp-modules as a service
-  sudo cp etc/systemd/system/misp-modules.service /etc/systemd/system/
+  sudo cp /usr/local/src/misp-modules/etc/systemd/system/misp-modules.service /etc/systemd/system/
   sudo systemctl daemon-reload
   sudo systemctl enable --now misp-modules
 
@@ -1760,6 +1782,7 @@ mispmodules () {
   # Enable Enrichment, set better timeouts
   $SUDO_WWW $CAKE Admin setSetting "Plugin.Enrichment_services_enable" true
   $SUDO_WWW $CAKE Admin setSetting "Plugin.Enrichment_hover_enable" true
+  $SUDO_WWW $CAKE Admin setSetting "Plugin.Enrichment_hover_popover_only" false
   $SUDO_WWW $CAKE Admin setSetting "Plugin.Enrichment_timeout" 300
   $SUDO_WWW $CAKE Admin setSetting "Plugin.Enrichment_hover_timeout" 150
   # TODO:"Investigate why the next one fails"
@@ -1894,8 +1917,8 @@ mail2misp () {
   sudo apt-get install cmake libcaca-dev liblua5.3-dev -y
   false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone https://github.com/MISP/mail_to_misp.git; done
   ## TODO: The below fails miserably (obviously) if faup/gtcac dirs exist, let's just make the dangerous assumption (for the sake of the installer, that they exist)
-  ##[[ ! -d "faup" ]] && false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone git://github.com/stricaud/faup.git faup; done
-  ##[[ ! -d "gtcaca" ]] && false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone git://github.com/stricaud/gtcaca.git gtcaca; done
+  ##[[ ! -d "faup" ]] && false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone https://github.com/stricaud/faup.git faup; done
+  ##[[ ! -d "gtcaca" ]] && false; while [[ $? -ne 0 ]]; do $SUDO_CMD git clone https://github.com/stricaud/gtcaca.git gtcaca; done
   sudo chown -R ${MISP_USER}:${MISP_USER} faup mail_to_misp gtcaca
   cd gtcaca
   $SUDO_CMD mkdir -p build
@@ -2140,13 +2163,15 @@ installCoreRHEL () {
     # In case you get "internal compiler error: Killed (program cc1plus)"
     # You ran out of memory.
     # Create some swap
-    sudo dd if=/dev/zero of=/var/swap.img bs=1024k count=4000
-    sudo mkswap /var/swap.img
-    sudo swapon /var/swap.img
+    TEMP_DIR=$(mktemp -d)
+    TEMP_SWAP=${TEMP_DIR}/swap.img
+    sudo dd if=/dev/zero of=${TEMP_SWAP} bs=1024k count=4000
+    sudo mkswap ${TEMP_SWAP}
+    sudo swapon ${TEMP_SWAP}
     # And compile again
-    $SUDO_WWW make -j3 pyLIEF
-    sudo swapoff /var/swap.img
-    sudo rm /var/swap.img
+    ${SUDO_WWW} make -j3 pyLIEF
+    sudo swapoff ${TEMP_SWAP}
+    sudo rm -r ${TEMP_DIR}
   fi
 
   # The following adds a PYTHONPATH to where the pyLIEF module has been compiled
@@ -2163,8 +2188,8 @@ installCoreRHEL () {
   # BROKEN: This needs to be tested on RHEL/CentOS
   ##sudo apt-get install cmake libcaca-dev liblua5.3-dev -y
   cd /tmp
-  [[ ! -d "faup" ]] && $SUDO_CMD git clone git://github.com/stricaud/faup.git faup
-  [[ ! -d "gtcaca" ]] && $SUDO_CMD git clone git://github.com/stricaud/gtcaca.git gtcaca
+  [[ ! -d "faup" ]] && $SUDO_CMD git clone https://github.com/stricaud/faup.git faup
+  [[ ! -d "gtcaca" ]] && $SUDO_CMD git clone https://github.com/stricaud/gtcaca.git gtcaca
   sudo chown -R ${MISP_USER}:${MISP_USER} faup gtcaca
   cd gtcaca
   $SUDO_CMD mkdir -p build
@@ -2287,12 +2312,12 @@ EOF
 
   sudo systemctl restart rh-mariadb102-mariadb
 
-  scl enable rh-mariadb102 "mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e 'CREATE DATABASE $DBNAME;'"
-  scl enable rh-mariadb102 "mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e \"GRANT USAGE on *.* to $DBUSER_MISP@localhost IDENTIFIED by '$DBPASSWORD_MISP';\""
-  scl enable rh-mariadb102 "mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e \"GRANT ALL PRIVILEGES on $DBNAME.* to '$DBUSER_MISP'@'localhost';\""
-  scl enable rh-mariadb102 "mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e 'FLUSH PRIVILEGES;'"
+  scl enable rh-mariadb102 "mysql -h $DBHOST -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e 'CREATE DATABASE $DBNAME;'"
+  scl enable rh-mariadb102 "mysql -h $DBHOST -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e \"GRANT USAGE on *.* to $DBUSER_MISP@localhost IDENTIFIED by '$DBPASSWORD_MISP';\""
+  scl enable rh-mariadb102 "mysql -h $DBHOST -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e \"GRANT ALL PRIVILEGES on $DBNAME.* to '$DBUSER_MISP'@'localhost';\""
+  scl enable rh-mariadb102 "mysql -h $DBHOST -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e 'FLUSH PRIVILEGES;'"
 
-  $SUDO_WWW cat $PATH_TO_MISP/INSTALL/MYSQL.sql | sudo scl enable rh-mariadb102 "mysql -u $DBUSER_MISP -p$DBPASSWORD_MISP $DBNAME"
+  $SUDO_WWW cat $PATH_TO_MISP/INSTALL/MYSQL.sql | sudo scl enable rh-mariadb102 "mysql -h $DBHOST -u $DBUSER_MISP -p$DBPASSWORD_MISP $DBNAME"
 }
 
 apacheConfig_RHEL () {
@@ -2520,6 +2545,7 @@ mispmodulesRHEL () {
   # pip install
   $SUDO_WWW $PATH_TO_MISP/venv/bin/pip install -U -I -r REQUIREMENTS
   $SUDO_WWW $PATH_TO_MISP/venv/bin/pip install -U .
+  $SUDO_WWW $PATH_TO_MISP/venv/bin/pip install pyfaup censys
   sudo yum install rubygem-rouge rubygem-asciidoctor zbar-devel opencv-devel -y
 
   echo "[Unit]
@@ -2761,10 +2787,10 @@ installSupported () {
       # Install PHP 7.2 Dependencies - functionLocation('INSTALL.ubuntu1804.md')
       [[ -n $CORE ]]   || [[ -n $ALL ]] && installDepsPhp72
     elif [[ "$PHP_VER" == 7.3 ]]; then
-      # Install PHP 7.4 Dependencies - functionLocation('INSTALL.ubuntu2004.md')
+      # Install PHP 7.3 Dependencies - functionLocation('generic/supportFunctions.md')
       [[ -n $CORE ]]   || [[ -n $ALL ]] && installDepsPhp73
     elif [[ "$PHP_VER" == 7.4 ]]; then
-      # Install PHP 7.3 Dependencies - functionLocation('generic/supportFunctions.md')
+      # Install PHP 7.4 Dependencies - functionLocation('INSTALL.ubuntu2004.md')
       [[ -n $CORE ]]   || [[ -n $ALL ]] && installDepsPhp74
     elif [[ "$PHP_VER" == 7.0 ]]; then
       # Install PHP 7.0 Dependencies - functionLocation('generic/supportFunctions.md')
@@ -2866,7 +2892,7 @@ installSupported () {
 
 # Main Kali Install function
 installMISPonKali () {
-  # Kali might have a bug on installs where libc6 is not up to date, this forces bash and libc to update - functionLocation('')
+  # Kali might have a bug on installs where libc6 is not up to date, this forces bash and libc to update - functionLocation('generic/supportFunctions.md')
   kaliUpgrade
 
   # Set locale if not set - functionLocation('generic/supportFunctions.md')
@@ -2875,8 +2901,8 @@ installMISPonKali () {
   # Set Base URL - functionLocation('generic/supportFunctions.md')
   setBaseURL
 
-  # Install PHP 7.3 Dependencies - functionLocation('generic/supportFunctions.md')
-  installDepsPhp73
+  # Install PHP 7.4 Dependencies - functionLocation('INSTALL.ubuntu2004.md')
+  installDepsPhp74
 
   # Set custom Kali only variables and tweaks
   space
@@ -2894,12 +2920,12 @@ installMISPonKali () {
   installCoreDeps
 
   debug "Enabling redis and gnupg modules"
-  sudo phpenmod -v 7.3 redis
-  sudo phpenmod -v 7.3 gnupg
+  sudo phpenmod -v 7.4 redis
+  sudo phpenmod -v 7.4 gnupg
 
   debug "Apache2 ops: dismod: status - dissite: 000-default enmod: ssl rewrite headers php7.3 ensite: default-ssl"
   sudo a2dismod status
-  sudo a2enmod ssl rewrite headers php7.3
+  sudo a2enmod ssl rewrite headers php7.4
   sudo a2dissite 000-default
   sudo a2ensite default-ssl
 
@@ -3002,26 +3028,18 @@ installMISPonKali () {
 
   debug "Setting up database"
   if [[ ! -e /var/lib/mysql/misp/users.ibd ]]; then
-    echo "
-      set timeout 10
-      spawn sudo mysql_secure_installation
-      expect \"Enter current password for root (enter for none):\"
-      send -- \"\r\"
-      expect \"Set root password?\"
-      send -- \"y\r\"
-      expect \"New password:\"
-      send -- \"${DBPASSWORD_ADMIN}\r\"
-      expect \"Re-enter new password:\"
-      send -- \"${DBPASSWORD_ADMIN}\r\"
-      expect \"Remove anonymous users?\"
-      send -- \"y\r\"
-      expect \"Disallow root login remotely?\"
-      send -- \"y\r\"
-      expect \"Remove test database and access to it?\"
-      send -- \"y\r\"
-      expect \"Reload privilege tables now?\"
-      send -- \"y\r\"
-      expect eof" | expect -f -
+    # Kill the anonymous users
+    sudo mysql -h $DBHOST -e "DROP USER IF EXISTS ''@'localhost'"
+    # Because our hostname varies we'll use some Bash magic here.
+    sudo mysql -h $DBHOST -e "DROP USER IF EXISTS ''@'$(hostname)'"
+    # Kill off the demo database
+    sudo mysql -h $DBHOST -e "DROP DATABASE IF EXISTS test"
+    # No root remote logins
+    sudo mysql -h $DBHOST -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1')"
+    # Make sure that NOBODY can access the server without a password
+    sudo mysqladmin -h $DBHOST -u "${DBUSER_ADMIN}" password "${DBPASSWORD_ADMIN}"
+    # Make our changes take effect
+    sudo mysql -h $DBHOST -e "FLUSH PRIVILEGES"
 
     sudo mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e "CREATE DATABASE $DBNAME;"
     sudo mysql -u $DBUSER_ADMIN -p$DBPASSWORD_ADMIN -e "GRANT USAGE ON *.* TO $DBUSER_MISP@localhost IDENTIFIED BY '$DBPASSWORD_MISP';"
@@ -3272,9 +3290,7 @@ x86_64-debian-stretch
 x86_64-debian-buster
 x86_64-ubuntu-bionic
 x86_64-ubuntu-focal
-x86_64-kali-2020.1
-x86_64-kali-2020.2
-x86_64-kali-2020.3
+x86_64-ubuntu-hirsute
 x86_64-kali-2020.4
 armv6l-raspbian-stretch
 armv7l-raspbian-stretch
@@ -3306,6 +3322,11 @@ if [[ "${FLAVOUR}" == "ubuntu" ]]; then
   fi
   if [[ "${RELEASE}" == "20.04" ]]; then
     echo "Install on Ubuntu 20.04 LTS fully supported."
+    echo "Please report bugs/issues here: https://github.com/MISP/MISP/issues"
+    installSupported PHP="7.4" && exit || exit
+  fi
+  if [[ "${RELEASE}" == "21.04" ]]; then
+    echo "Install on Ubuntu 21.04 LTS fully supported."
     echo "Please report bugs/issues here: https://github.com/MISP/MISP/issues"
     installSupported PHP="7.4" && exit || exit
   fi

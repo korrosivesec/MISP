@@ -1,8 +1,12 @@
 <?php
 App::uses('AppModel', 'Model');
 
+/**
+ * @property User $User
+ */
 class Role extends AppModel
 {
+    public $recursive = -1;
     public $validate = array(
         'valueNotEmpty' => array(
             'rule' => array('valueNotEmpty'),
@@ -103,7 +107,7 @@ class Role extends AppModel
             'id' => 'RolePermTagEditor',
             'text' => 'Tag Editor',
             'readonlyenabled' => false,
-            'title' => 'This permission gives users the ability to create, modify or remove tags.'
+            'title' => 'This permission gives users the ability to create tags.'
         ),
         'perm_template' => array(
             'id' => 'RolePermTemplate',
@@ -230,6 +234,18 @@ class Role extends AppModel
             $this->data['Role']['rate_limit_count'] = 0;
         }
         return true;
+    }
+
+    public function afterSave($created, $options = array())
+    {
+        // After role change, update `date_modified` field for all user with this role to apply this change to already
+        // logged users.
+        if (!$created && !empty($this->data)) {
+            $roleId = $this->data['Role']['id'];
+            $this->User->updateAll(['date_modified' => time()], ['role_id' => $roleId]);
+        }
+
+        parent::afterSave($created, $options);
     }
 
     public function afterFind($results, $primary = false)
